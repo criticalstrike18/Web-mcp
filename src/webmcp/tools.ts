@@ -69,22 +69,45 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
         const inStockOnly = args.inStockOnly !== false;
         const limit = Math.max(1, Math.min(args.limit || 10, 50));
 
+        // Category aliases mapping
+        const categorySynonyms: Record<string, string[]> = {
+          shoes: ["shoes", "footwear", "sneakers", "boots", "trainers", "loafers", "runners", "running"],
+          tees: ["tees", "tee", "t-shirts", "t-shirt", "tshirts", "tshirt", "shirts", "tops", "apparel", "crewneck"],
+          watches: ["watches", "watch", "timepiece", "chronograph", "diver"],
+          bags: ["bags", "bag", "handbag", "handbags", "backpack", "backpacks", "tote", "totes", "duffle", "crossbody"],
+        };
+
+        const matchCategory = (prodCategory?: string, prodSub?: string, targetCat?: string) => {
+          if (!targetCat) return true;
+          const pCat = (prodCategory || "").toLowerCase();
+          const pSub = (prodSub || "").toLowerCase();
+          if (pCat.includes(targetCat) || pSub.includes(targetCat)) return true;
+
+          for (const [key, synonyms] of Object.entries(categorySynonyms)) {
+            const matchesTarget = key === targetCat || synonyms.some((s) => targetCat.includes(s) || s.includes(targetCat));
+            if (matchesTarget) {
+              if (pCat === key || synonyms.some((s) => pCat.includes(s) || pSub.includes(s))) {
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+
         const matched = products.filter((p) => {
           if (inStockOnly && p.inStock === false) return false;
           if (typeof p.price === "number") {
             if (p.price < minPrice || p.price > maxPrice) return false;
           }
 
-          if (brandLower && !(p.brand || "").toLowerCase().includes(brandLower)) {
-            return false;
+          if (brandLower) {
+            const pBrand = (p.brand || "").toLowerCase();
+            const brandTokens = brandLower.split(/[\s/\-_,]+/).filter(Boolean);
+            const brandMatches = brandTokens.some((token) => pBrand.includes(token));
+            if (!brandMatches) return false;
           }
 
-          if (
-            categoryLower &&
-            !(p.category || "").toLowerCase().includes(categoryLower) &&
-            !(p.subcategory || "").toLowerCase().includes(categoryLower) &&
-            !(p.name || "").toLowerCase().includes(categoryLower)
-          ) {
+          if (categoryLower && !matchCategory(p.category, p.subcategory, categoryLower)) {
             return false;
           }
 
@@ -102,14 +125,31 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
           }
 
           if (queryLower) {
-            const textMatch =
-              (p.name || "").toLowerCase().includes(queryLower) ||
-              (p.title || "").toLowerCase().includes(queryLower) ||
-              (p.brand || "").toLowerCase().includes(queryLower) ||
-              (p.category || "").toLowerCase().includes(queryLower) ||
-              (p.subcategory || "").toLowerCase().includes(queryLower) ||
-              (p.description || "").toLowerCase().includes(queryLower);
-            if (!textMatch) return false;
+            const combinedText = [
+              p.name,
+              p.title,
+              p.brand,
+              p.category,
+              p.subcategory,
+              p.description,
+              ...(p.materials || []),
+              ...(p.colors || []),
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+
+            // Direct substring match
+            if (combinedText.includes(queryLower)) {
+              return true;
+            }
+
+            // Tokenized match: every word in query must appear somewhere in product text
+            const queryTokens = queryLower.split(/[\s/\-_,]+/).filter(Boolean);
+            if (queryTokens.length > 0) {
+              const allTokensFound = queryTokens.every((token) => combinedText.includes(token));
+              if (!allTokensFound) return false;
+            }
           }
 
           return true;
@@ -292,30 +332,68 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
         const minPrice = typeof args.minPrice === "number" ? args.minPrice : 0;
         const maxPrice = typeof args.maxPrice === "number" ? args.maxPrice : Number.POSITIVE_INFINITY;
 
+        const categorySynonyms: Record<string, string[]> = {
+          shoes: ["shoes", "footwear", "sneakers", "boots", "trainers", "loafers", "runners", "running"],
+          tees: ["tees", "tee", "t-shirts", "t-shirt", "tshirts", "tshirt", "shirts", "tops", "apparel", "crewneck"],
+          watches: ["watches", "watch", "timepiece", "chronograph", "diver"],
+          bags: ["bags", "bag", "handbag", "handbags", "backpack", "backpacks", "tote", "totes", "duffle", "crossbody"],
+        };
+
+        const matchCategory = (prodCategory?: string, prodSub?: string, targetCat?: string) => {
+          if (!targetCat) return true;
+          const pCat = (prodCategory || "").toLowerCase();
+          const pSub = (prodSub || "").toLowerCase();
+          if (pCat.includes(targetCat) || pSub.includes(targetCat)) return true;
+
+          for (const [key, synonyms] of Object.entries(categorySynonyms)) {
+            const matchesTarget = key === targetCat || synonyms.some((s) => targetCat.includes(s) || s.includes(targetCat));
+            if (matchesTarget) {
+              if (pCat === key || synonyms.some((s) => pCat.includes(s) || pSub.includes(s))) {
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+
         const matched = products.filter((p) => {
           if (typeof p.price === "number") {
             if (p.price < minPrice || p.price > maxPrice) return false;
           }
 
-          if (brandLower && !(p.brand || "").toLowerCase().includes(brandLower)) {
-            return false;
+          if (brandLower) {
+            const pBrand = (p.brand || "").toLowerCase();
+            const brandTokens = brandLower.split(/[\s/\-_,]+/).filter(Boolean);
+            const brandMatches = brandTokens.some((token) => pBrand.includes(token));
+            if (!brandMatches) return false;
           }
 
-          if (
-            categoryLower &&
-            !(p.category || "").toLowerCase().includes(categoryLower) &&
-            !(p.subcategory || "").toLowerCase().includes(categoryLower)
-          ) {
+          if (categoryLower && !matchCategory(p.category, p.subcategory, categoryLower)) {
             return false;
           }
 
           if (queryLower) {
-            const textMatch =
-              (p.name || "").toLowerCase().includes(queryLower) ||
-              (p.title || "").toLowerCase().includes(queryLower) ||
-              (p.brand || "").toLowerCase().includes(queryLower) ||
-              (p.description || "").toLowerCase().includes(queryLower);
-            if (!textMatch) return false;
+            const combinedText = [
+              p.name,
+              p.title,
+              p.brand,
+              p.category,
+              p.subcategory,
+              p.description,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+
+            if (combinedText.includes(queryLower)) {
+              return true;
+            }
+
+            const queryTokens = queryLower.split(/[\s/\-_,]+/).filter(Boolean);
+            if (queryTokens.length > 0) {
+              const allTokensFound = queryTokens.every((token) => combinedText.includes(token));
+              if (!allTokensFound) return false;
+            }
           }
 
           return true;
