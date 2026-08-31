@@ -1,4 +1,4 @@
-import { run } from "~/src/utils";
+import { run } from "../utils";
 
 export const CHUNK_SIZE = 110;
 export const RENDER_DISTANCE = 2;

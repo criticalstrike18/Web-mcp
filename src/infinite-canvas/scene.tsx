@@ -2,8 +2,9 @@ import { KeyboardControls, Stats, useKeyboardControls, useProgress } from "@reac
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as React from "react";
 import * as THREE from "three";
-import { useIsTouchDevice } from "~/src/use-is-touch-device";
-import { clamp, lerp } from "~/src/utils";
+import { useIsTouchDevice } from "../use-is-touch-device";
+import { clamp, lerp } from "../utils";
+import { webmcpEvents } from "../webmcp";
 import {
   CHUNK_FADE_MARGIN,
   CHUNK_OFFSETS,
@@ -21,7 +22,12 @@ import {
 import styles from "./style.module.css";
 import { getTexture } from "./texture-manager";
 import type { ChunkData, InfiniteCanvasProps, MediaItem, PlaneData } from "./types";
-import { generateChunkPlanesCached, getChunkUpdateThrottleMs, shouldThrottleUpdate } from "./utils";
+import {
+  findNearestProductPlane,
+  generateChunkPlanesCached,
+  getChunkUpdateThrottleMs,
+  shouldThrottleUpdate,
+} from "./utils";
 
 const PLANE_GEOMETRY = new THREE.PlaneGeometry(1, 1);
 
@@ -61,6 +67,33 @@ type CameraGridState = {
   camZ: number;
 };
 
+export const globalFocusState = {
+  active: false,
+  targetId: "",
+  targetUrl: "",
+  targetName: "",
+  x: 0,
+  y: 0,
+  z: 0,
+};
+
+function isPlaneTarget(media: MediaItem, pos: THREE.Vector3, focus: typeof globalFocusState) {
+  if (!focus.active) return false;
+  const idMatch = Boolean(focus.targetId && media.id && media.id === focus.targetId);
+  const nameMatch = Boolean(
+    focus.targetName &&
+      ((media.name && media.name === focus.targetName) || (media.title && media.title === focus.targetName))
+  );
+  const urlMatch = Boolean(focus.targetUrl && media.url === focus.targetUrl);
+
+  const spatialMatch =
+    Math.abs(pos.x - focus.x) < 3 &&
+    Math.abs(pos.y - focus.y) < 3 &&
+    Math.abs(pos.z - focus.z) < 3;
+
+  return (idMatch || nameMatch || urlMatch) && spatialMatch;
+}
+
 function MediaPlane({
   position,
   scale,
@@ -92,6 +125,34 @@ function MediaPlane({
 
     if (!material || !mesh) {
       return;
+    }
+
+    // Check focused product isolation
+    if (globalFocusState.active) {
+      const isTarget = isPlaneTarget(media, position, globalFocusState);
+
+      if (isTarget) {
+        state.opacity = 1;
+        material.opacity = 1;
+        material.depthWrite = true;
+        mesh.visible = true;
+        mesh.renderOrder = 999;
+        return;
+      }
+
+      // Check if this plane is obstructing the focused product
+      const isObstructing =
+        Math.abs(position.x - globalFocusState.x) < 30 &&
+        Math.abs(position.y - globalFocusState.y) < 30 &&
+        position.z > globalFocusState.z - 4;
+
+      if (isObstructing) {
+        state.opacity = lerp(state.opacity, 0, 0.25);
+        material.opacity = state.opacity;
+        material.depthWrite = false;
+        mesh.visible = state.opacity > INVIS_THRESHOLD;
+        return;
+      }
     }
 
     state.frame = (state.frame + 1) & 1;
@@ -128,6 +189,7 @@ function MediaPlane({
     material.opacity = isFullyOpaque ? 1 : state.opacity;
     material.depthWrite = isFullyOpaque;
     mesh.visible = state.opacity > INVIS_THRESHOLD;
+    mesh.renderOrder = 0;
   });
 
   // Calculate display scale from media dimensions (from manifest)
@@ -184,7 +246,28 @@ function MediaPlane({
   }
 
   return (
-    <mesh ref={meshRef} position={position} scale={displayScale} visible={false} geometry={PLANE_GEOMETRY}>
+    <mesh
+      ref={meshRef}
+      position={position}
+      scale={displayScale}
+      visible={false}
+      geometry={PLANE_GEOMETRY}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        webmcpEvents.emit({
+          type: "PRODUCT_FOCUS",
+          product: media,
+          source: "ui",
+        });
+      }}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        document.body.style.cursor = "pointer";
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = "default";
+      }}
+    >
       <meshBasicMaterial ref={materialRef} transparent opacity={0} side={THREE.DoubleSide} />
     </mesh>
   );
@@ -295,6 +378,116 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
   const state = React.useRef<ControllerState>(createInitialState(INITIAL_CAMERA_Z));
   const cameraGridRef = React.useRef<CameraGridState>({ cx: 0, cy: 0, cz: 0, camZ: camera.position.z });
 
+  const flight = React.useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    startZ: number;
+    targetX: number;
+    targetY: number;
+    targetZ: number;
+    startTime: number;
+    duration: number;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startZ: 0,
+    targetX: 0,
+    targetY: 0,
+    targetZ: 0,
+    startTime: 0,
+    duration: 1400,
+  });
+
+  const startFlightTo = React.useCallback(
+    (targetX: number, targetY: number, targetZ: number, duration = 1400) => {
+      const s = state.current;
+      flight.current = {
+        active: true,
+        startX: s.basePos.x,
+        startY: s.basePos.y,
+        startZ: s.basePos.z,
+        targetX,
+        targetY,
+        targetZ,
+        startTime: performance.now(),
+        duration,
+      };
+      s.velocity = { x: 0, y: 0, z: 0 };
+      s.targetVel = { x: 0, y: 0, z: 0 };
+      s.scrollAccum = 0;
+    },
+    []
+  );
+
+  React.useEffect(() => {
+    // 1. PRODUCT FOCUS Navigation
+    const unsubFocus = webmcpEvents.on("PRODUCT_FOCUS", (event) => {
+      if (event.type !== "PRODUCT_FOCUS") return;
+      const product = event.product;
+      const index = media.findIndex(
+        (m) => (m.id && m.id === product.id) || (m.name && m.name === product.name) || m.url === product.url
+      );
+      if (index === -1) return;
+
+      const cam = cameraGridRef.current;
+      const location = findNearestProductPlane(index, media.length, cam.cx, cam.cy, cam.cz, 6);
+      if (!location) return;
+
+      const s = state.current;
+      const dist = Math.hypot(
+        location.position.x - s.basePos.x,
+        location.position.y - s.basePos.y,
+        location.position.z - s.basePos.z
+      );
+      const duration = clamp(Math.round(dist * 2.8), 1000, 2200);
+      const targetZ = location.position.z + 16;
+
+      // Set global focus target for clean plane isolation
+      globalFocusState.active = true;
+      globalFocusState.targetId = product.id || "";
+      globalFocusState.targetUrl = product.url || "";
+      globalFocusState.targetName = product.name || product.title || "";
+      globalFocusState.x = location.position.x;
+      globalFocusState.y = location.position.y;
+      globalFocusState.z = location.position.z;
+
+      startFlightTo(location.position.x, location.position.y, targetZ, duration);
+    });
+
+    // 2. FILTER PRODUCTS Navigation (navigate toward first matched product)
+    const unsubFilter = webmcpEvents.on("FILTER_PRODUCTS", (event) => {
+      if (event.type !== "FILTER_PRODUCTS" || !event.products.length) return;
+      const first = event.products[0];
+      const index = media.findIndex(
+        (m) => (m.id && m.id === first.id) || (m.name && m.name === first.name) || m.url === first.url
+      );
+      if (index === -1) return;
+
+      const cam = cameraGridRef.current;
+      const location = findNearestProductPlane(index, media.length, cam.cx, cam.cy, cam.cz, 6);
+      if (!location) return;
+
+      globalFocusState.active = false;
+      const targetZ = location.position.z + 40;
+      startFlightTo(location.position.x, location.position.y, targetZ, 1200);
+    });
+
+    // 3. RESET VIEW Navigation
+    const unsubReset = webmcpEvents.on("RESET_VIEW", (event) => {
+      if (event.type !== "RESET_VIEW") return;
+      globalFocusState.active = false;
+      startFlightTo(0, 0, INITIAL_CAMERA_Z, 1200);
+    });
+
+    return () => {
+      unsubFocus();
+      unsubFilter();
+      unsubReset();
+    };
+  }, [media, startFlightTo]);
+
   const [chunks, setChunks] = React.useState<ChunkData[]>([]);
 
   const { progress } = useProgress();
@@ -319,7 +512,8 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
     };
 
     const onMouseDown = (e: MouseEvent) => {
-      // Just start dragging - keep drift frozen at current value
+      flight.current.active = false;
+      globalFocusState.active = false;
       s.isDragging = true;
       s.lastMouse = { x: e.clientX, y: e.clientY };
       setCursor("grabbing");
@@ -343,6 +537,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
       };
 
       if (s.isDragging) {
+        flight.current.active = false;
         s.targetVel.x -= (e.clientX - s.lastMouse.x) * 0.025;
         s.targetVel.y += (e.clientY - s.lastMouse.y) * 0.025;
         s.lastMouse = { x: e.clientX, y: e.clientY };
@@ -350,11 +545,13 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
     };
 
     const onWheel = (e: WheelEvent) => {
+      flight.current.active = false;
       e.preventDefault();
       s.scrollAccum += e.deltaY * 0.006;
     };
 
     const onTouchStart = (e: TouchEvent) => {
+      flight.current.active = false;
       e.preventDefault();
       s.lastTouches = Array.from(e.touches) as Touch[];
       s.lastTouchDist = getTouchDistance(s.lastTouches);
@@ -412,50 +609,79 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
   useFrame(() => {
     const s = state.current;
     const now = performance.now();
+    const isZooming = Math.abs(s.velocity.z) > 0.05 || flight.current.active;
 
-    const { forward, backward, left, right, up, down } = getKeys();
-    if (forward) s.targetVel.z -= KEYBOARD_SPEED;
-    if (backward) s.targetVel.z += KEYBOARD_SPEED;
-    if (left) s.targetVel.x -= KEYBOARD_SPEED;
-    if (right) s.targetVel.x += KEYBOARD_SPEED;
-    if (down) s.targetVel.y -= KEYBOARD_SPEED;
-    if (up) s.targetVel.y += KEYBOARD_SPEED;
+    if (flight.current.active) {
+      const f = flight.current;
+      const t = clamp((now - f.startTime) / f.duration, 0, 1);
+      // Smooth ease-in-out cubic curve
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-    const isZooming = Math.abs(s.velocity.z) > 0.05;
-    const zoomFactor = clamp(s.basePos.z / 50, 0.3, 2.0);
-    const driftAmount = 8.0 * zoomFactor;
-    const driftLerp = isZooming ? 0.2 : 0.12;
+      s.basePos.x = lerp(f.startX, f.targetX, eased);
+      s.basePos.y = lerp(f.startY, f.targetY, eased);
+      s.basePos.z = lerp(f.startZ, f.targetZ, eased);
+      s.drift.x = lerp(s.drift.x, 0, 0.2);
+      s.drift.y = lerp(s.drift.y, 0, 0.2);
+      s.targetVel.x = 0;
+      s.targetVel.y = 0;
+      s.targetVel.z = 0;
+      s.velocity.x = 0;
+      s.velocity.y = 0;
+      s.velocity.z = 0;
+      s.scrollAccum = 0;
 
-    if (s.isDragging) {
-      // Freeze drift during drag - keep it at current value
-    } else if (isTouchDevice) {
-      s.drift.x = lerp(s.drift.x, 0, driftLerp);
-      s.drift.y = lerp(s.drift.y, 0, driftLerp);
+      if (t >= 1) {
+        f.active = false;
+        webmcpEvents.emit({
+          type: "CAMERA_NAVIGATE",
+          target: { x: f.targetX, y: f.targetY, z: f.targetZ },
+        });
+      }
     } else {
-      s.drift.x = lerp(s.drift.x, s.mouse.x * driftAmount, driftLerp);
-      s.drift.y = lerp(s.drift.y, s.mouse.y * driftAmount, driftLerp);
+      const { forward, backward, left, right, up, down } = getKeys();
+      if (forward) s.targetVel.z -= KEYBOARD_SPEED;
+      if (backward) s.targetVel.z += KEYBOARD_SPEED;
+      if (left) s.targetVel.x -= KEYBOARD_SPEED;
+      if (right) s.targetVel.x += KEYBOARD_SPEED;
+      if (down) s.targetVel.y -= KEYBOARD_SPEED;
+      if (up) s.targetVel.y += KEYBOARD_SPEED;
+
+      const isZooming = Math.abs(s.velocity.z) > 0.05;
+      const zoomFactor = clamp(s.basePos.z / 50, 0.3, 2.0);
+      const driftAmount = 8.0 * zoomFactor;
+      const driftLerp = isZooming ? 0.2 : 0.12;
+
+      if (s.isDragging) {
+        // Freeze drift during drag - keep it at current value
+      } else if (isTouchDevice) {
+        s.drift.x = lerp(s.drift.x, 0, driftLerp);
+        s.drift.y = lerp(s.drift.y, 0, driftLerp);
+      } else {
+        s.drift.x = lerp(s.drift.x, s.mouse.x * driftAmount, driftLerp);
+        s.drift.y = lerp(s.drift.y, s.mouse.y * driftAmount, driftLerp);
+      }
+
+      s.targetVel.z += s.scrollAccum;
+      s.scrollAccum *= 0.8;
+
+      s.targetVel.x = clamp(s.targetVel.x, -MAX_VELOCITY, MAX_VELOCITY);
+      s.targetVel.y = clamp(s.targetVel.y, -MAX_VELOCITY, MAX_VELOCITY);
+      s.targetVel.z = clamp(s.targetVel.z, -MAX_VELOCITY, MAX_VELOCITY);
+
+      s.velocity.x = lerp(s.velocity.x, s.targetVel.x, VELOCITY_LERP);
+      s.velocity.y = lerp(s.velocity.y, s.targetVel.y, VELOCITY_LERP);
+      s.velocity.z = lerp(s.velocity.z, s.targetVel.z, VELOCITY_LERP);
+
+      s.basePos.x += s.velocity.x;
+      s.basePos.y += s.velocity.y;
+      s.basePos.z += s.velocity.z;
+
+      s.targetVel.x *= VELOCITY_DECAY;
+      s.targetVel.y *= VELOCITY_DECAY;
+      s.targetVel.z *= VELOCITY_DECAY;
     }
 
-    s.targetVel.z += s.scrollAccum;
-    s.scrollAccum *= 0.8;
-
-    s.targetVel.x = clamp(s.targetVel.x, -MAX_VELOCITY, MAX_VELOCITY);
-    s.targetVel.y = clamp(s.targetVel.y, -MAX_VELOCITY, MAX_VELOCITY);
-    s.targetVel.z = clamp(s.targetVel.z, -MAX_VELOCITY, MAX_VELOCITY);
-
-    s.velocity.x = lerp(s.velocity.x, s.targetVel.x, VELOCITY_LERP);
-    s.velocity.y = lerp(s.velocity.y, s.targetVel.y, VELOCITY_LERP);
-    s.velocity.z = lerp(s.velocity.z, s.targetVel.z, VELOCITY_LERP);
-
-    s.basePos.x += s.velocity.x;
-    s.basePos.y += s.velocity.y;
-    s.basePos.z += s.velocity.z;
-
     camera.position.set(s.basePos.x + s.drift.x, s.basePos.y + s.drift.y, s.basePos.z);
-
-    s.targetVel.x *= VELOCITY_DECAY;
-    s.targetVel.y *= VELOCITY_DECAY;
-    s.targetVel.z *= VELOCITY_DECAY;
 
     const cx = Math.floor(s.basePos.x / CHUNK_SIZE);
     const cy = Math.floor(s.basePos.y / CHUNK_SIZE);

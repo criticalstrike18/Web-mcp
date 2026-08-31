@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { hashString, seededRandom } from "~/src/utils";
+import { hashString, seededRandom } from "../utils";
 import { CHUNK_SIZE } from "./constants";
 import type { PlaneData } from "./types";
 
@@ -84,3 +84,63 @@ export const generateChunkPlanesCached = (cx: number, cy: number, cz: number): P
 export const shouldThrottleUpdate = (lastUpdateTime: number, throttleMs: number, currentTime: number): boolean => {
   return currentTime - lastUpdateTime >= throttleMs;
 };
+
+export type TargetProductLocation = {
+  cx: number;
+  cy: number;
+  cz: number;
+  planeIndex: number;
+  position: { x: number; y: number; z: number };
+  size: number;
+};
+
+export const findNearestProductPlane = (
+  targetMediaIndex: number,
+  totalMediaCount: number,
+  startCx = 0,
+  startCy = 0,
+  startCz = 0,
+  maxRadius = 6
+): TargetProductLocation | null => {
+  if (totalMediaCount <= 0 || targetMediaIndex < 0) return null;
+
+  for (let radius = 0; radius <= maxRadius; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== radius) continue;
+
+          const cx = startCx + dx;
+          const cy = startCy + dy;
+          const cz = startCz + dz;
+          const seed = hashString(`${cx},${cy},${cz}`);
+
+          for (let i = 0; i < 5; i++) {
+            const s = seed + i * 1000;
+            const r = (n: number) => seededRandom(s + n);
+            const mediaIndex = Math.floor(r(5) * 1_000_000);
+
+            if (mediaIndex % totalMediaCount === targetMediaIndex) {
+              const x = cx * CHUNK_SIZE + r(0) * CHUNK_SIZE;
+              const y = cy * CHUNK_SIZE + r(1) * CHUNK_SIZE;
+              const z = cz * CHUNK_SIZE + r(2) * CHUNK_SIZE;
+              const size = 12 + r(4) * 8;
+
+              return {
+                cx,
+                cy,
+                cz,
+                planeIndex: i,
+                position: { x, y, z },
+                size,
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
