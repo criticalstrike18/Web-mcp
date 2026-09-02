@@ -67,32 +67,7 @@ type CameraGridState = {
   camZ: number;
 };
 
-export const globalFocusState = {
-  active: false,
-  targetId: "",
-  targetUrl: "",
-  targetName: "",
-  x: 0,
-  y: 0,
-  z: 0,
-};
 
-function isPlaneTarget(media: MediaItem, pos: THREE.Vector3, focus: typeof globalFocusState) {
-  if (!focus.active) return false;
-  const idMatch = Boolean(focus.targetId && media.id && media.id === focus.targetId);
-  const nameMatch = Boolean(
-    focus.targetName &&
-      ((media.name && media.name === focus.targetName) || (media.title && media.title === focus.targetName))
-  );
-  const urlMatch = Boolean(focus.targetUrl && media.url === focus.targetUrl);
-
-  const spatialMatch =
-    Math.abs(pos.x - focus.x) < 3 &&
-    Math.abs(pos.y - focus.y) < 3 &&
-    Math.abs(pos.z - focus.z) < 3;
-
-  return (idMatch || nameMatch || urlMatch) && spatialMatch;
-}
 
 function MediaPlane({
   position,
@@ -114,6 +89,7 @@ function MediaPlane({
   const meshRef = React.useRef<THREE.Mesh>(null);
   const materialRef = React.useRef<THREE.MeshBasicMaterial>(null);
   const localState = React.useRef({ opacity: 0, frame: 0, ready: false });
+  const pointerDownPos = React.useRef<{ x: number; y: number; time: number } | null>(null);
 
   const [texture, setTexture] = React.useState<THREE.Texture | null>(null);
   const [isReady, setIsReady] = React.useState(false);
@@ -125,34 +101,6 @@ function MediaPlane({
 
     if (!material || !mesh) {
       return;
-    }
-
-    // Check focused product isolation
-    if (globalFocusState.active) {
-      const isTarget = isPlaneTarget(media, position, globalFocusState);
-
-      if (isTarget) {
-        state.opacity = 1;
-        material.opacity = 1;
-        material.depthWrite = true;
-        mesh.visible = true;
-        mesh.renderOrder = 999;
-        return;
-      }
-
-      // Check if this plane is obstructing the focused product
-      const isObstructing =
-        Math.abs(position.x - globalFocusState.x) < 30 &&
-        Math.abs(position.y - globalFocusState.y) < 30 &&
-        position.z > globalFocusState.z - 4;
-
-      if (isObstructing) {
-        state.opacity = lerp(state.opacity, 0, 0.25);
-        material.opacity = state.opacity;
-        material.depthWrite = false;
-        mesh.visible = state.opacity > INVIS_THRESHOLD;
-        return;
-      }
     }
 
     state.frame = (state.frame + 1) & 1;
@@ -245,6 +193,35 @@ function MediaPlane({
     return null;
   }
 
+  const handlePointerDown = (e: any) => {
+    e.stopPropagation();
+    pointerDownPos.current = {
+      x: e.clientX ?? 0,
+      y: e.clientY ?? 0,
+      time: performance.now(),
+    };
+  };
+
+  const handlePointerUp = (e: any) => {
+    e.stopPropagation();
+    if (!pointerDownPos.current) return;
+    const clientX = e.clientX ?? 0;
+    const clientY = e.clientY ?? 0;
+    const dx = clientX - pointerDownPos.current.x;
+    const dy = clientY - pointerDownPos.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const elapsed = performance.now() - pointerDownPos.current.time;
+    pointerDownPos.current = null;
+
+    if (dist < 8 && elapsed < 450) {
+      webmcpEvents.emit({
+        type: "PRODUCT_FOCUS",
+        product: media,
+        source: "ui",
+      });
+    }
+  };
+
   return (
     <mesh
       ref={meshRef}
@@ -252,14 +229,8 @@ function MediaPlane({
       scale={displayScale}
       visible={false}
       geometry={PLANE_GEOMETRY}
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        webmcpEvents.emit({
-          type: "PRODUCT_FOCUS",
-          product: media,
-          source: "ui",
-        });
-      }}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       onPointerOver={(e) => {
         e.stopPropagation();
         document.body.style.cursor = "pointer";
@@ -388,6 +359,9 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
     targetZ: number;
     startTime: number;
     duration: number;
+    mode?: "detail" | "grid";
+    product?: MediaItem;
+    products?: MediaItem[];
   }>({
     active: false,
     startX: 0,
@@ -401,7 +375,13 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
   });
 
   const startFlightTo = React.useCallback(
-    (targetX: number, targetY: number, targetZ: number, duration = 1400) => {
+    (
+      targetX: number,
+      targetY: number,
+      targetZ: number,
+      duration = 1400,
+      meta?: { mode: "detail" | "grid"; product?: MediaItem; products?: MediaItem[] }
+    ) => {
       const s = state.current;
       flight.current = {
         active: true,
@@ -413,6 +393,9 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
         targetZ,
         startTime: performance.now(),
         duration,
+        mode: meta?.mode,
+        product: meta?.product,
+        products: meta?.products,
       };
       s.velocity = { x: 0, y: 0, z: 0 };
       s.targetVel = { x: 0, y: 0, z: 0 };
@@ -441,24 +424,20 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
         location.position.y - s.basePos.y,
         location.position.z - s.basePos.z
       );
-      const duration = clamp(Math.round(dist * 2.8), 1000, 2200);
-      const targetZ = location.position.z + 16;
+      const duration = clamp(Math.round(dist * 2.0), 800, 1400);
+      const targetZ = location.position.z + 24;
 
-      // Set global focus target for clean plane isolation
-      globalFocusState.active = true;
-      globalFocusState.targetId = product.id || "";
-      globalFocusState.targetUrl = product.url || "";
-      globalFocusState.targetName = product.name || product.title || "";
-      globalFocusState.x = location.position.x;
-      globalFocusState.y = location.position.y;
-      globalFocusState.z = location.position.z;
-
-      startFlightTo(location.position.x, location.position.y, targetZ, duration);
+      startFlightTo(location.position.x, location.position.y, targetZ, duration, {
+        mode: "detail",
+        product,
+        products: event.products,
+      });
     });
 
-    // 2. FILTER PRODUCTS Navigation (navigate toward first matched product)
+    // 2. FILTER PRODUCTS Navigation (multi-product = overview, single = detail)
     const unsubFilter = webmcpEvents.on("FILTER_PRODUCTS", (event) => {
       if (event.type !== "FILTER_PRODUCTS" || !event.products.length) return;
+      const isSingle = event.products.length === 1;
       const first = event.products[0];
       const index = media.findIndex(
         (m) => (m.id && m.id === first.id) || (m.name && m.name === first.name) || m.url === first.url
@@ -469,16 +448,27 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
       const location = findNearestProductPlane(index, media.length, cam.cx, cam.cy, cam.cz, 6);
       if (!location) return;
 
-      globalFocusState.active = false;
-      const targetZ = location.position.z + 40;
-      startFlightTo(location.position.x, location.position.y, targetZ, 1200);
+      // Close-up for single product (z + 24), wider zoom for multi-product grid overview (z + 48)
+      const targetZ = isSingle ? location.position.z + 24 : location.position.z + 48;
+      const s = state.current;
+      const dist = Math.hypot(
+        location.position.x - s.basePos.x,
+        location.position.y - s.basePos.y,
+        location.position.z - s.basePos.z
+      );
+      const duration = clamp(Math.round(dist * 2.0), 800, 1400);
+
+      startFlightTo(location.position.x, location.position.y, targetZ, duration, {
+        mode: isSingle ? "detail" : "grid",
+        product: first,
+        products: event.products,
+      });
     });
 
     // 3. RESET VIEW Navigation
     const unsubReset = webmcpEvents.on("RESET_VIEW", (event) => {
       if (event.type !== "RESET_VIEW") return;
-      globalFocusState.active = false;
-      startFlightTo(0, 0, INITIAL_CAMERA_Z, 1200);
+      startFlightTo(0, 0, INITIAL_CAMERA_Z, 1000);
     });
 
     return () => {
@@ -511,9 +501,18 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
       canvas.style.cursor = cursor;
     };
 
+    const cancelActiveFlight = () => {
+      if (flight.current.active) {
+        flight.current.active = false;
+        webmcpEvents.emit({
+          type: "UI_STATE_CHANGED",
+          state: { isFlighting: false },
+        });
+      }
+    };
+
     const onMouseDown = (e: MouseEvent) => {
-      flight.current.active = false;
-      globalFocusState.active = false;
+      cancelActiveFlight();
       s.isDragging = true;
       s.lastMouse = { x: e.clientX, y: e.clientY };
       setCursor("grabbing");
@@ -537,7 +536,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
       };
 
       if (s.isDragging) {
-        flight.current.active = false;
+        cancelActiveFlight();
         s.targetVel.x -= (e.clientX - s.lastMouse.x) * 0.025;
         s.targetVel.y += (e.clientY - s.lastMouse.y) * 0.025;
         s.lastMouse = { x: e.clientX, y: e.clientY };
@@ -545,13 +544,13 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
     };
 
     const onWheel = (e: WheelEvent) => {
-      flight.current.active = false;
+      cancelActiveFlight();
       e.preventDefault();
       s.scrollAccum += e.deltaY * 0.006;
     };
 
     const onTouchStart = (e: TouchEvent) => {
-      flight.current.active = false;
+      cancelActiveFlight();
       e.preventDefault();
       s.lastTouches = Array.from(e.touches) as Touch[];
       s.lastTouchDist = getTouchDistance(s.lastTouches);
@@ -636,6 +635,14 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
           type: "CAMERA_NAVIGATE",
           target: { x: f.targetX, y: f.targetY, z: f.targetZ },
         });
+        if (f.mode) {
+          webmcpEvents.emit({
+            type: "FOCUS_FLIGHT_COMPLETE",
+            mode: f.mode,
+            product: f.product,
+            products: f.products,
+          });
+        }
       }
     } else {
       const { forward, backward, left, right, up, down } = getKeys();
@@ -646,7 +653,6 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
       if (down) s.targetVel.y -= KEYBOARD_SPEED;
       if (up) s.targetVel.y += KEYBOARD_SPEED;
 
-      const isZooming = Math.abs(s.velocity.z) > 0.05;
       const zoomFactor = clamp(s.basePos.z / 50, 0.3, 2.0);
       const driftAmount = 8.0 * zoomFactor;
       const driftLerp = isZooming ? 0.2 : 0.12;

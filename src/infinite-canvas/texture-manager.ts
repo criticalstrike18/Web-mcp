@@ -3,7 +3,7 @@ import type { MediaItem } from "./types";
 
 const textureCache = new Map<string, THREE.Texture>();
 const loadCallbacks = new Map<string, Set<(tex: THREE.Texture) => void>>();
-const loader = new THREE.TextureLoader();
+const loader = new THREE.TextureLoader(THREE.DefaultLoadingManager);
 
 const isTextureLoaded = (tex: THREE.Texture): boolean => {
   const img = tex.image as HTMLImageElement | undefined;

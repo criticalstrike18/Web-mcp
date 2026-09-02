@@ -1,6 +1,35 @@
 import type { MediaItem } from "../infinite-canvas/types";
+import { cartManager } from "./cart";
 import { webmcpEvents } from "./events";
 import type { ModelContextTool } from "./types";
+
+function getCanonicalProductKey(p: MediaItem): string {
+  const baseName = (p.name || p.title || "")
+    .replace(/\s*-\s*Edition\s*#\d+/i, "")
+    .trim()
+    .toLowerCase();
+  return baseName || (p.id || "").toLowerCase() || p.url;
+}
+
+function deduplicateProducts(items: MediaItem[], allowExactId?: string): MediaItem[] {
+  if (allowExactId) {
+    const exact = items.find((p) => (p.id || "").toLowerCase() === allowExactId.toLowerCase());
+    if (exact) return [exact];
+  }
+
+  const seen = new Set<string>();
+  const unique: MediaItem[] = [];
+
+  for (const item of items) {
+    const key = getCanonicalProductKey(item);
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(item);
+    }
+  }
+
+  return unique;
+}
 
 export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
   return [
@@ -9,7 +38,7 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
       name: "search_products",
       title: "Search Products",
       description:
-        "Search and filter catalog products by text keyword, category, brand, price range, and size availability. Returns structured product matches.",
+        "Search and filter catalog products by text keyword, category, brand, price range, and size availability. Automatically animates the 3D camera: if exactly 1 product matches, flies directly to it and opens single-product detail view; if multiple products match, flies to the 1st product and reveals the multi-product grid view. Do NOT call focus_product in a loop for multiple results.",
       inputSchema: {
         type: "object",
         properties: {
@@ -94,21 +123,23 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
           return false;
         };
 
-        const matched = products.filter((p) => {
-          if (inStockOnly && p.inStock === false) return false;
+        const scoredMatches: { product: MediaItem; score: number }[] = [];
+
+        for (const p of products) {
+          if (inStockOnly && p.inStock === false) continue;
           if (typeof p.price === "number") {
-            if (p.price < minPrice || p.price > maxPrice) return false;
+            if (p.price < minPrice || p.price > maxPrice) continue;
           }
 
           if (brandLower) {
             const pBrand = (p.brand || "").toLowerCase();
             const brandTokens = brandLower.split(/[\s/\-_,]+/).filter(Boolean);
             const brandMatches = brandTokens.some((token) => pBrand.includes(token));
-            if (!brandMatches) return false;
+            if (!brandMatches) continue;
           }
 
           if (categoryLower && !matchCategory(p.category, p.subcategory, categoryLower)) {
-            return false;
+            continue;
           }
 
           if (sizeQuery) {
@@ -121,67 +152,75 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
                 sLower.replace("us ", "") === sizeQuery
               );
             });
-            if (!hasSize) return false;
+            if (!hasSize) continue;
           }
 
           if (queryLower) {
-            const combinedText = [
-              p.name,
-              p.title,
-              p.brand,
-              p.category,
-              p.subcategory,
-              p.description,
-              ...(p.materials || []),
-              ...(p.colors || []),
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
+            const nameText = `${p.name || ""} ${p.title || ""}`.toLowerCase();
+            const brandCatText = `${p.brand || ""} ${p.category || ""} ${p.subcategory || ""}`.toLowerCase();
+            const descText = (p.description || "").toLowerCase();
+            const metaText = [...(p.materials || []), ...(p.colors || [])].join(" ").toLowerCase();
 
-            // Direct substring match
-            if (combinedText.includes(queryLower)) {
-              return true;
-            }
-
-            // Tokenized match: every word in query must appear somewhere in product text
             const queryTokens = queryLower.split(/[\s/\-_,]+/).filter(Boolean);
-            if (queryTokens.length > 0) {
-              const allTokensFound = queryTokens.every((token) => combinedText.includes(token));
-              if (!allTokensFound) return false;
+
+            let score = 0;
+
+            // 1. Exact match in name / title
+            if (nameText.includes(queryLower)) {
+              score += 100;
+            } else if (queryTokens.length > 0 && queryTokens.every((t) => nameText.includes(t))) {
+              score += 70;
+            } else if (brandCatText.includes(queryLower)) {
+              score += 50;
+            } else if (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText).includes(t))) {
+              score += 40;
+            } else if (descText.includes(queryLower) || (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText + " " + descText).includes(t)))) {
+              score += 20;
+            } else if (metaText.includes(queryLower) || (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText + " " + descText + " " + metaText).includes(t)))) {
+              score += 5;
+            } else {
+              continue; // No match
             }
+
+            scoredMatches.push({ product: p, score });
+          } else {
+            scoredMatches.push({ product: p, score: 1 });
           }
+        }
 
-          return true;
-        });
+        scoredMatches.sort((a, b) => b.score - a.score);
 
-        const results = matched.slice(0, limit);
+        let matched = scoredMatches.map((m) => m.product);
+        if (queryLower && scoredMatches.length > 0) {
+          const topScore = scoredMatches[0].score;
+          if (topScore >= 70) {
+            matched = scoredMatches.filter((m) => m.score >= 40).map((m) => m.product);
+          }
+        }
 
-        // If only 1 result matched, trigger single product focus
+        const uniqueMatched = deduplicateProducts(matched, queryLower.startsWith("prod-") ? queryLower : undefined);
+        const results = uniqueMatched.slice(0, limit);
+
         if (results.length === 1) {
+          // Exactly 1 match: Focus camera directly and open single-product detail view
           webmcpEvents.emit({
             type: "PRODUCT_FOCUS",
             product: results[0],
+            products: results,
             source: "mcp",
           });
         } else if (results.length > 1) {
-          // If multiple results, trigger multi-product filter view
+          // Multiple matches: Fly camera to 1st product, then reveal multi-product grid view
           webmcpEvents.emit({
             type: "FILTER_PRODUCTS",
             products: results,
-            filters: {
-              query: args.query,
-              category: args.category,
-              brand: args.brand,
-              minPrice: args.minPrice,
-              maxPrice: args.maxPrice,
-            },
+            filters: args,
             source: "mcp",
           });
         }
 
         return {
-          totalMatches: matched.length,
+          totalMatches: uniqueMatched.length,
           returnedCount: results.length,
           products: results.map((p) => ({
             id: p.id,
@@ -204,7 +243,7 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
       name: "focus_product",
       title: "Focus and Navigate to Product",
       description:
-        "Selects a specific product, smoothly animates the 3D camera to its spatial position, and opens the detailed AI generative product drawer on the right.",
+        "Selects a specific single product, smoothly animates the 3D camera to its spatial position, and opens the single-product detail view. Use ONLY when targeting ONE specific product.",
       inputSchema: {
         type: "object",
         properties: {
@@ -258,6 +297,7 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
         webmcpEvents.emit({
           type: "PRODUCT_FOCUS",
           product: found,
+          products: [found],
           source: "mcp",
         });
 
@@ -293,7 +333,7 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
       name: "filter_products",
       title: "Filter Products Grid View",
       description:
-        "Filters the catalog and displays matched items in an aesthetic multi-product shopping grid layout with full details.",
+        "Filters the catalog and displays matched items in the multi-product shopping grid (or single detail view if exactly 1 match). Automatically flies 3D camera to the 1st product and opens the grid view.",
       inputSchema: {
         type: "object",
         properties: {
@@ -356,60 +396,90 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
           return false;
         };
 
-        const matched = products.filter((p) => {
+        const scoredMatches: { product: MediaItem; score: number }[] = [];
+
+        for (const p of products) {
           if (typeof p.price === "number") {
-            if (p.price < minPrice || p.price > maxPrice) return false;
+            if (p.price < minPrice || p.price > maxPrice) continue;
           }
 
           if (brandLower) {
             const pBrand = (p.brand || "").toLowerCase();
             const brandTokens = brandLower.split(/[\s/\-_,]+/).filter(Boolean);
             const brandMatches = brandTokens.some((token) => pBrand.includes(token));
-            if (!brandMatches) return false;
+            if (!brandMatches) continue;
           }
 
           if (categoryLower && !matchCategory(p.category, p.subcategory, categoryLower)) {
-            return false;
+            continue;
           }
 
           if (queryLower) {
-            const combinedText = [
-              p.name,
-              p.title,
-              p.brand,
-              p.category,
-              p.subcategory,
-              p.description,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
-
-            if (combinedText.includes(queryLower)) {
-              return true;
-            }
+            const nameText = `${p.name || ""} ${p.title || ""}`.toLowerCase();
+            const brandCatText = `${p.brand || ""} ${p.category || ""} ${p.subcategory || ""}`.toLowerCase();
+            const descText = (p.description || "").toLowerCase();
+            const metaText = [...(p.materials || []), ...(p.colors || [])].join(" ").toLowerCase();
 
             const queryTokens = queryLower.split(/[\s/\-_,]+/).filter(Boolean);
-            if (queryTokens.length > 0) {
-              const allTokensFound = queryTokens.every((token) => combinedText.includes(token));
-              if (!allTokensFound) return false;
+
+            let score = 0;
+
+            if (nameText.includes(queryLower)) {
+              score += 100;
+            } else if (queryTokens.length > 0 && queryTokens.every((t) => nameText.includes(t))) {
+              score += 70;
+            } else if (brandCatText.includes(queryLower)) {
+              score += 50;
+            } else if (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText).includes(t))) {
+              score += 40;
+            } else if (descText.includes(queryLower) || (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText + " " + descText).includes(t)))) {
+              score += 20;
+            } else if (metaText.includes(queryLower) || (queryTokens.length > 0 && queryTokens.every((t) => (nameText + " " + brandCatText + " " + descText + " " + metaText).includes(t)))) {
+              score += 5;
+            } else {
+              continue;
             }
+
+            scoredMatches.push({ product: p, score });
+          } else {
+            scoredMatches.push({ product: p, score: 1 });
           }
+        }
 
-          return true;
-        });
+        scoredMatches.sort((a, b) => b.score - a.score);
 
-        webmcpEvents.emit({
-          type: "FILTER_PRODUCTS",
-          products: matched,
-          filters: args,
-          source: "mcp",
-        });
+        let matched = scoredMatches.map((m) => m.product);
+        if (queryLower && scoredMatches.length > 0) {
+          const topScore = scoredMatches[0].score;
+          if (topScore >= 70) {
+            matched = scoredMatches.filter((m) => m.score >= 40).map((m) => m.product);
+          }
+        }
+
+        const uniqueMatched = deduplicateProducts(matched, queryLower.startsWith("prod-") ? queryLower : undefined);
+        const results = uniqueMatched.slice(0, 30);
+
+        // Single result: route directly to product focus (skip grid entirely)
+        if (results.length === 1) {
+          webmcpEvents.emit({
+            type: "PRODUCT_FOCUS",
+            product: results[0],
+            products: results,
+            source: "mcp",
+          });
+        } else if (results.length > 1) {
+          webmcpEvents.emit({
+            type: "FILTER_PRODUCTS",
+            products: results,
+            filters: args,
+            source: "mcp",
+          });
+        }
 
         return {
-          totalMatches: matched.length,
+          totalMatches: uniqueMatched.length,
           filtersApplied: args,
-          products: matched.slice(0, 30).map((p) => ({
+          products: results.map((p) => ({
             id: p.id,
             name: p.name || p.title,
             brand: p.brand,
@@ -548,7 +618,208 @@ export function createWebMCPTools(products: MediaItem[]): ModelContextTool[] {
       },
     },
 
-    // 6. RESET VIEW
+    // 6. SELECT PRODUCT SIZE
+    {
+      name: "select_product_size",
+      title: "Select Product Size",
+      description: "Selects a size (e.g. 'US 9', 'M', 'XL', '41mm') for the currently focused product.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          size: {
+            type: "string",
+            description: "The size to select (e.g. 'US 9', 'US 10', 'M', 'L', 'XL')",
+          },
+        },
+        required: ["size"],
+      },
+      execute: async (args: { size: string }) => {
+        if (!args.size) {
+          throw new Error("Missing required 'size' parameter");
+        }
+        webmcpEvents.emit({
+          type: "SELECT_SIZE",
+          size: args.size,
+        });
+        return {
+          success: true,
+          selectedSize: args.size,
+        };
+      },
+    },
+
+    // 7. ADD TO CART
+    {
+      name: "add_to_cart",
+      title: "Add Product to Bag / Cart",
+      description: "Adds a product and chosen size to the shopping bag. Can target a specific productId or the currently focused product.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          productId: {
+            type: "string",
+            description: "Optional product ID (e.g. 'PROD-0001'). If omitted, adds the currently focused product.",
+          },
+          productName: {
+            type: "string",
+            description: "Optional product name to look up and add",
+          },
+          size: {
+            type: "string",
+            description: "Chosen size (e.g. 'US 9', 'M', 'XL')",
+          },
+          quantity: {
+            type: "integer",
+            description: "Quantity to add (default 1)",
+          },
+        },
+      },
+      execute: async (args: {
+        productId?: string;
+        productName?: string;
+        size?: string;
+        quantity?: number;
+      }) => {
+        let targetProduct: MediaItem | undefined;
+
+        if (args.productId) {
+          targetProduct = products.find(
+            (p) => (p.id || "").toLowerCase() === args.productId?.trim().toLowerCase()
+          );
+        } else if (args.productName) {
+          const nameLower = args.productName.trim().toLowerCase();
+          targetProduct = products.find(
+            (p) =>
+              (p.name || "").toLowerCase().includes(nameLower) ||
+              (p.title || "").toLowerCase().includes(nameLower)
+          );
+        }
+
+        if (!targetProduct) {
+          const history = webmcpEvents.getHistory();
+          for (let i = history.length - 1; i >= 0; i--) {
+            const ev = history[i];
+            if (ev.type === "PRODUCT_FOCUS" && ev.product) {
+              targetProduct = ev.product;
+              break;
+            }
+          }
+        }
+
+        if (!targetProduct && products.length > 0) {
+          targetProduct = products[0];
+        }
+
+        if (!targetProduct) {
+          throw new Error("No product available to add to cart");
+        }
+
+        const quantity = Math.max(1, args.quantity || 1);
+        const chosenSize =
+          args.size ||
+          (targetProduct.sizes && targetProduct.sizes.length > 0 ? targetProduct.sizes[0] : null);
+
+        webmcpEvents.emit({
+          type: "ADD_TO_CART",
+          product: targetProduct,
+          size: chosenSize,
+          quantity,
+        });
+
+        const targetId = targetProduct.id || targetProduct.sku || targetProduct.url;
+        const cartItem =
+          cartManager.getItems().find((i) => i.productId === targetId && i.size === chosenSize) || {
+            productId: targetId,
+            size: chosenSize,
+            quantity,
+          };
+
+        return {
+          success: true,
+          addedItem: {
+            productId: cartItem.productId,
+            name: targetProduct.name || targetProduct.title,
+            size: cartItem.size,
+            quantity: cartItem.quantity,
+            price: targetProduct.price,
+            formattedPrice: targetProduct.formattedPrice,
+          },
+          cartTotalCount: cartManager.getTotalCount(),
+          cartSubtotal: cartManager.getSubtotal(),
+          formattedSubtotal: `$${cartManager.getSubtotal().toFixed(2)}`,
+        };
+      },
+    },
+
+    // 8. GET CART
+    {
+      name: "get_cart",
+      title: "Get Shopping Cart",
+      description: "Returns all items currently in the user's shopping bag, total quantity count, and subtotal calculation.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+      execute: async () => {
+        const items = cartManager.getItems();
+        const totalCount = cartManager.getTotalCount();
+        const subtotal = cartManager.getSubtotal();
+
+        return {
+          totalCount,
+          subtotal,
+          formattedSubtotal: `$${subtotal.toFixed(2)}`,
+          items: items.map((i) => ({
+            productId: i.productId,
+            name: i.product.name || i.product.title,
+            brand: i.product.brand,
+            size: i.size,
+            quantity: i.quantity,
+            price: i.product.price,
+            formattedPrice: i.product.formattedPrice,
+          })),
+        };
+      },
+    },
+
+    // 9. NAVIGATE PRODUCT
+    {
+      name: "navigate_product",
+      title: "Navigate Product in Collection",
+      description: "Navigates between products in the current list: 'next' for next product, 'previous' for previous product, or 'back' to return to the grid overview.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          direction: {
+            type: "string",
+            enum: ["next", "previous", "back"],
+            description: "Direction to navigate: 'next', 'previous', or 'back'",
+          },
+        },
+        required: ["direction"],
+      },
+      execute: async (args: { direction: "next" | "previous" | "back" }) => {
+        if (args.direction === "next") {
+          webmcpEvents.emit({ type: "NEXT_PRODUCT" });
+        } else if (args.direction === "previous") {
+          webmcpEvents.emit({ type: "PREVIOUS_PRODUCT" });
+        } else if (args.direction === "back") {
+          webmcpEvents.emit({ type: "BACK_TO_GRID" });
+        } else {
+          throw new Error(`Invalid direction: ${args.direction}. Expected 'next', 'previous', or 'back'`);
+        }
+
+        return {
+          success: true,
+          action: args.direction,
+        };
+      },
+    },
+
+    // 10. RESET VIEW
     {
       name: "reset_view",
       title: "Reset View to Explore Mode",

@@ -256,6 +256,13 @@ export class WebMCPServer implements ModelContext {
       focus: (productNameOrId: string) =>
         this.executeTool("focus_product", { productName: productNameOrId }),
       filter: (category: string) => this.executeTool("filter_products", { category }),
+      selectSize: (size: string) => this.executeTool("select_product_size", { size }),
+      addToCart: (productId?: string, size?: string, quantity?: number) =>
+        this.executeTool("add_to_cart", { productId, size, quantity }),
+      getCart: () => this.executeTool("get_cart", {}),
+      next: () => this.executeTool("navigate_product", { direction: "next" }),
+      prev: () => this.executeTool("navigate_product", { direction: "previous" }),
+      back: () => this.executeTool("navigate_product", { direction: "back" }),
       reset: () => this.executeTool("reset_view", {}),
     };
 

@@ -4,6 +4,7 @@ import { Frame } from "../frame";
 import { InfiniteCanvas } from "../infinite-canvas";
 import type { MediaItem } from "../infinite-canvas/types";
 import { PageLoader } from "../loader";
+import { ProductDisplayManager } from "../product-display";
 import { initWebMCP } from "../webmcp";
 
 export function App() {
@@ -25,6 +26,7 @@ export function App() {
       <Frame />
       <PageLoader progress={textureProgress} />
       <InfiniteCanvas media={media} onTextureProgress={setTextureProgress} />
+      <ProductDisplayManager />
     </>
   );
 }

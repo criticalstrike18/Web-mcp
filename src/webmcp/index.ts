@@ -17,6 +17,7 @@ export function getWebMCPServer(): WebMCPServer | null {
   return defaultServerInstance;
 }
 
+export * from "./cart";
 export * from "./events";
 export * from "./server";
 export * from "./tools";

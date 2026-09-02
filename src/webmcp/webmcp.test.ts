@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { MediaItem } from "../infinite-canvas/types";
+import { cartManager } from "./cart";
 import { webmcpEvents } from "./events";
 import { WebMCPServer } from "./server";
 
@@ -106,7 +107,7 @@ describe("WebMCP Server & Tools Protocol", () => {
   it("registers all default WebMCP tools", () => {
     const server = new WebMCPServer(mockProducts);
     const tools = server.getTools();
-    expect(tools.length).toBe(6);
+    expect(tools.length).toBe(10);
 
     const toolNames = tools.map((t) => t.name);
     expect(toolNames).toContain("search_products");
@@ -114,6 +115,10 @@ describe("WebMCP Server & Tools Protocol", () => {
     expect(toolNames).toContain("filter_products");
     expect(toolNames).toContain("get_product_details");
     expect(toolNames).toContain("list_categories_and_brands");
+    expect(toolNames).toContain("select_product_size");
+    expect(toolNames).toContain("add_to_cart");
+    expect(toolNames).toContain("get_cart");
+    expect(toolNames).toContain("navigate_product");
     expect(toolNames).toContain("reset_view");
   });
 
@@ -170,7 +175,51 @@ describe("WebMCP Server & Tools Protocol", () => {
     unsubscribe();
   });
 
-  it("executes filter_products tool and broadcasts FILTER_PRODUCTS event", async () => {
+  it("executes search_products and routes single match to PRODUCT_FOCUS and multi match to FILTER_PRODUCTS", async () => {
+    const server = new WebMCPServer(mockProducts);
+
+    // 1. Single match -> Emits PRODUCT_FOCUS
+    let singleFocusEvent: any = null;
+    let singleFilterEvent: any = null;
+    const unsubFocus = webmcpEvents.on("PRODUCT_FOCUS", (e) => {
+      singleFocusEvent = e;
+    });
+    const unsubFilter = webmcpEvents.on("FILTER_PRODUCTS", (e) => {
+      singleFilterEvent = e;
+    });
+
+    const singleRes = await server.executeTool("search_products", { query: "Jordan" });
+    expect(singleRes.totalMatches).toBe(1);
+    expect(singleFocusEvent).not.toBeNull();
+    expect(singleFocusEvent.type).toBe("PRODUCT_FOCUS");
+    expect(singleFocusEvent.product.name).toContain("Jordan");
+    expect(singleFilterEvent).toBeNull();
+
+    unsubFocus();
+    unsubFilter();
+
+    // 2. Multi match -> Emits FILTER_PRODUCTS (for 1st product camera flight -> grid overview)
+    let multiFocusEvent: any = null;
+    let multiFilterEvent: any = null;
+    const unsubFocus2 = webmcpEvents.on("PRODUCT_FOCUS", (e) => {
+      multiFocusEvent = e;
+    });
+    const unsubFilter2 = webmcpEvents.on("FILTER_PRODUCTS", (e) => {
+      multiFilterEvent = e;
+    });
+
+    const multiRes = await server.executeTool("search_products", { category: "Footwear" });
+    expect(multiRes.totalMatches).toBe(2);
+    expect(multiFilterEvent).not.toBeNull();
+    expect(multiFilterEvent.type).toBe("FILTER_PRODUCTS");
+    expect(multiFilterEvent.products.length).toBe(2);
+    expect(multiFocusEvent).toBeNull();
+
+    unsubFocus2();
+    unsubFilter2();
+  });
+
+  it("executes filter_products tool and broadcasts FILTER_PRODUCTS for multi-products", async () => {
     const server = new WebMCPServer(mockProducts);
     let capturedEvent: any = null;
 
@@ -184,6 +233,28 @@ describe("WebMCP Server & Tools Protocol", () => {
     expect(capturedEvent.products.length).toBe(2);
 
     unsubscribe();
+  });
+
+  it("executes filter_products tool and broadcasts PRODUCT_FOCUS when exactly 1 match", async () => {
+    const server = new WebMCPServer(mockProducts);
+    let capturedFocus: any = null;
+    let capturedFilter: any = null;
+
+    const unsubFocus = webmcpEvents.on("PRODUCT_FOCUS", (e) => {
+      capturedFocus = e;
+    });
+    const unsubFilter = webmcpEvents.on("FILTER_PRODUCTS", (e) => {
+      capturedFilter = e;
+    });
+
+    const res = await server.executeTool("filter_products", { brand: "Rolex" });
+    expect(res.totalMatches).toBe(1);
+    expect(capturedFocus).not.toBeNull();
+    expect(capturedFocus.product.brand).toBe("Rolex");
+    expect(capturedFilter).toBeNull();
+
+    unsubFocus();
+    unsubFilter();
   });
 
   it("executes get_product_details tool", async () => {
@@ -205,6 +276,70 @@ describe("WebMCP Server & Tools Protocol", () => {
     expect(res.totalProducts).toBe(4);
     expect(res.categories.some((c: any) => c.name === "Footwear")).toBe(true);
     expect(res.brands.some((b: any) => b.name === "Rolex")).toBe(true);
+  });
+
+  it("executes select_product_size tool and broadcasts SELECT_SIZE event", async () => {
+    const server = new WebMCPServer(mockProducts);
+    let capturedEvent: any = null;
+
+    const unsubscribe = webmcpEvents.on("SELECT_SIZE", (e) => {
+      capturedEvent = e;
+    });
+
+    const res = await server.executeTool("select_product_size", { size: "US 10.5" });
+    expect(res.success).toBe(true);
+    expect(res.selectedSize).toBe("US 10.5");
+    expect(capturedEvent).not.toBeNull();
+    expect(capturedEvent.size).toBe("US 10.5");
+
+    unsubscribe();
+  });
+
+  it("executes add_to_cart and get_cart tools accurately", async () => {
+    cartManager.clearCart();
+    const server = new WebMCPServer(mockProducts);
+
+    const addRes = await server.executeTool("add_to_cart", {
+      productId: "PROD-0001",
+      size: "US 9",
+      quantity: 2,
+    });
+    expect(addRes.success).toBe(true);
+    expect(addRes.addedItem.name).toContain("Jordan");
+    expect(addRes.addedItem.quantity).toBe(2);
+    expect(addRes.cartTotalCount).toBeGreaterThanOrEqual(2);
+
+    const cartRes = await server.executeTool("get_cart", {});
+    expect(cartRes.totalCount).toBeGreaterThanOrEqual(2);
+    expect(cartRes.items.some((i: any) => i.productId === "PROD-0001")).toBe(true);
+  });
+
+  it("executes navigate_product tool with direction options", async () => {
+    const server = new WebMCPServer(mockProducts);
+    let lastEvent: any = null;
+
+    const unsubNext = webmcpEvents.on("NEXT_PRODUCT", (e) => {
+      lastEvent = e;
+    });
+    const unsubPrev = webmcpEvents.on("PREVIOUS_PRODUCT", (e) => {
+      lastEvent = e;
+    });
+    const unsubBack = webmcpEvents.on("BACK_TO_GRID", (e) => {
+      lastEvent = e;
+    });
+
+    await server.executeTool("navigate_product", { direction: "next" });
+    expect(lastEvent?.type).toBe("NEXT_PRODUCT");
+
+    await server.executeTool("navigate_product", { direction: "previous" });
+    expect(lastEvent?.type).toBe("PREVIOUS_PRODUCT");
+
+    await server.executeTool("navigate_product", { direction: "back" });
+    expect(lastEvent?.type).toBe("BACK_TO_GRID");
+
+    unsubNext();
+    unsubPrev();
+    unsubBack();
   });
 
   it("executes reset_view tool and emits RESET_VIEW event", async () => {
@@ -248,7 +383,7 @@ describe("WebMCP Server & Tools Protocol", () => {
       id: 3,
       method: "tools/list",
     });
-    expect(listRes.result?.tools?.length).toBe(6);
+    expect(listRes.result?.tools?.length).toBe(10);
 
     // 4. tools/call
     const callRes = await server.handleJsonRpc({

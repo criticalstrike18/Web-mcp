@@ -1,0 +1,567 @@
+/* Codrops GridZoom Editorial Styling and Exact Layout */
+
+:root {
+  font-size: 15px;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.container {
+  --color-text: #000000;
+  --color-bg: rgba(247, 245, 238, 0.94);
+  --color-link: #000000;
+  --color-link-hover: #823725;
+  --color-accent: #823725;
+  --font-family: rustica, "Syne", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --grid-border-radius: 8px;
+  --grid-padding: 0.5vw;
+
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  font-family: var(--font-family);
+  font-size: 15px;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.2;
+
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0.4s;
+  will-change: opacity, transform;
+}
+
+.containerActive {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Typography Helpers */
+.oh {
+  overflow: hidden;
+  display: block;
+}
+
+.oh__inner {
+  display: inline-block;
+  transform-origin: 0% 50%;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ==========================================================================
+   PAGE 1: LARGE GRID (Codrops GridZoom Home Screen)
+   ========================================================================== */
+
+.grid {
+  display: grid;
+  --grid-border-radius: 8px;
+  grid-template-columns: repeat(2, 50%);
+  width: 100%;
+}
+
+.gridLarge {
+  grid-auto-rows: 32vmin;
+  padding: 0.5vw;
+  --grid-padding: 0.5vw;
+  min-height: 100vh;
+  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.gridCell {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  align-items: end;
+  text-align: left;
+  outline: none;
+}
+
+.gridCellClickable {
+  cursor: pointer;
+}
+
+.gridCellPadded {
+  padding: calc(var(--grid-padding) * 2);
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.gridCellImg {
+  width: calc(100% - var(--grid-padding) * 2);
+  height: calc(100% - var(--grid-padding) * 2);
+  margin: var(--grid-padding);
+  border-radius: var(--grid-border-radius);
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background-color: #edeae0;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
+}
+
+.gridCellClickable:hover .gridCellImg {
+  transform: scale(0.96);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.12);
+}
+
+.gridCellImgInner {
+  background-size: cover;
+  background-position: 50% 50%;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.gridCellClickable:hover .gridCellImgInner {
+  transform: scale(1.18);
+}
+
+/* Grid Frame / Title Cells */
+.frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.frameTitle {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0 0 1.5rem 0;
+  letter-spacing: -0.01em;
+}
+
+.frameLinks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.frameLink {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0 1rem 0.35rem 0;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-link);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.frameLink:hover {
+  color: var(--color-link-hover);
+}
+
+.filterBadge {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-link);
+}
+
+/* Asymmetric 4-column Placement (Matches Codrops GridZoom) */
+@media screen and (min-width: 53em) {
+  .grid {
+    grid-template-columns: repeat(4, 25%);
+  }
+
+  .gridCellPadded {
+    padding: var(--grid-padding);
+  }
+
+  .gridCell_c1_r1 { grid-column: 1; grid-row: 1; }
+  .gridCell_c3_r1 { grid-column: 3; grid-row: 1; }
+  .gridCell_c4_r1 { grid-column: 4; grid-row: 1; }
+  .gridCell_c1_r2 { grid-column: 1; grid-row: 2; }
+  .gridCell_c2_r2 { grid-column: 2; grid-row: 2; }
+  .gridCell_c3_r2 { grid-column: 3; grid-row: 2; }
+  .gridCell_c4_r2 { grid-column: 4; grid-row: 2; }
+  .gridCell_c2_r3 { grid-column: 2; grid-row: 3; }
+  .gridCell_c4_r3 { grid-column: 4; grid-row: 3; }
+  .gridCell_c1_r4 { grid-column: 1; grid-row: 4; }
+  .gridCell_c3_r4 { grid-column: 3; grid-row: 4; }
+  .gridCell_c3_r5 { grid-column: 3; grid-row: 5; }
+  .gridCell_c2_r5 { grid-column: 2; grid-row: 5; }
+  .gridCell_c4_r5 { grid-column: 4; grid-row: 5; }
+}
+
+/* ==========================================================================
+   PAGE 2: PRODUCT DETAIL VIEW (Codrops GridZoom Content View)
+   ========================================================================== */
+
+.content {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  padding: 8vh 8vw 6vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  animation: fadeInUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media screen and (min-width: 53em) {
+  .content {
+    width: 44%;
+  }
+}
+
+.contentItem {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.contentItemNumber {
+  font-weight: 600;
+  display: block;
+  font-size: 1.1rem;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.contentItemHeading {
+  font-size: clamp(2.2rem, 3.8vw, 3.8rem);
+  line-height: 1.05;
+  margin: 0.5rem 0 1.5rem 0;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: #000;
+}
+
+.priceRow {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.priceCurrent {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #000;
+}
+
+.priceOriginal {
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: #888;
+  text-decoration: line-through;
+}
+
+.discountBadge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.inStockText {
+  color: #15803d;
+}
+
+.outOfStockText {
+  color: #b91c1c;
+}
+
+.ratingText {
+  color: #555;
+}
+
+.contentItemText {
+  max-width: 36ch;
+  margin-bottom: 1.75rem;
+  line-height: 1.6;
+  font-size: 1rem;
+  color: #222;
+}
+
+/* Sizing Options */
+.optionsSection {
+  margin-bottom: 1.5rem;
+  width: 100%;
+}
+
+.optionsLabel {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #555;
+  margin-bottom: 0.5rem;
+}
+
+.sizePillRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sizePill {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  background: #fff;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sizePill:hover {
+  border-color: #000;
+}
+
+.sizePillActive {
+  background: #000 !important;
+  color: #fff !important;
+  border-color: #000 !important;
+}
+
+.specRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1.75rem;
+}
+
+.specBadge {
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0.3rem 0.7rem;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  color: #444;
+}
+
+/* CTA Action */
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  width: 100%;
+  max-width: 380px;
+}
+
+.addToBagButton {
+  appearance: none;
+  flex: 1;
+  padding: 0.85rem 1.5rem;
+  background: #000;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.addToBagButton:hover {
+  background-color: var(--color-accent);
+  transform: translateY(-1px);
+}
+
+.addToBagButtonSuccess {
+  background-color: #15803d !important;
+}
+
+/* Back Button (Signature Codrops SVG line arrow) */
+.back {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 1.5rem 0 1rem 0;
+  stroke: #000;
+  cursor: pointer;
+  width: 50px;
+  display: block;
+  transition: stroke 0.2s ease, transform 0.2s ease;
+}
+
+.back svg {
+  stroke-linecap: round;
+}
+
+.back:hover,
+.back:focus {
+  outline: none;
+  stroke: var(--color-accent);
+  transform: translateX(-4px);
+}
+
+/* Mini Grid (In Detail View on Bottom Left) */
+.gridMini {
+  width: 220px;
+  height: 180px;
+  --grid-padding: 1px;
+  margin-top: 1.5rem;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 25%);
+}
+
+.gridMini .gridCell {
+  cursor: pointer;
+}
+
+.gridMini .gridCellImg {
+  border-radius: 4px;
+}
+
+.gridMini .gridCell:not(.gridCellCurrent):hover .gridCellImg {
+  opacity: 0.7;
+}
+
+.gridCellCurrent .gridCellImg {
+  opacity: 0.35;
+  outline: 2px solid #000;
+}
+
+/* Right Side: Featured Image & Slide Navigation */
+.detailMediaSection {
+  position: fixed;
+  width: 42%;
+  right: 8%;
+  top: 8vh;
+  bottom: 6vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  animation: fadeInScale 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media screen and (max-width: 52.99em) {
+  .detailMediaSection {
+    position: relative;
+    width: 100%;
+    right: auto;
+    top: auto;
+    bottom: auto;
+    margin-bottom: 2rem;
+    pointer-events: auto;
+  }
+}
+
+.featuredImageWrapper {
+  width: 100%;
+  flex: 1;
+  max-height: 65vh;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.featuredImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.featuredImageWrapper:hover .featuredImage {
+  transform: scale(1.04);
+}
+
+.slideNav {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  pointer-events: auto;
+}
+
+.slideNavImg {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  margin: 0;
+  outline: none;
+  flex: 1;
+  height: 70px;
+  position: relative;
+  overflow: hidden;
+  opacity: 0.65;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background-size: cover;
+  background-position: 50% 50%;
+  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+.slideNavImg:hover {
+  opacity: 1;
+  transform: translateY(-2px);
+  border-color: #000;
+}
