@@ -79,6 +79,7 @@ export function GridOverview({
             <button
               type="button"
               key={product.id || product.url || index}
+              style={{ animationDelay: `${index * 35}ms` }}
               className={`${styles.gridCell} ${styles.gridCellClickable} ${posClass}`}
               onClick={() => onSelectProduct(product)}
               title={product.name || product.title}

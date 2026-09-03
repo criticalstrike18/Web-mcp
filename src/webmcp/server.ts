@@ -206,9 +206,11 @@ export class WebMCPServer implements ModelContext {
         try {
           (document as any).modelContext.registerTool({
             name: tool.name,
+            title: tool.title,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            execute: async (input: any) => tool.execute(input),
+            annotations: tool.annotations,
+            execute: async (input: any) => this.executeTool(tool.name, input),
           });
         } catch (err) {
           console.warn(`[WebMCP Native Register] on document.modelContext for ${tool.name}:`, err);
@@ -221,9 +223,11 @@ export class WebMCPServer implements ModelContext {
         try {
           (navigator as any).modelContext.registerTool({
             name: tool.name,
+            title: tool.title,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            execute: async (input: any) => tool.execute(input),
+            annotations: tool.annotations,
+            execute: async (input: any) => this.executeTool(tool.name, input),
           });
         } catch (err) {
           console.warn(`[WebMCP Native Register] on navigator.modelContext for ${tool.name}:`, err);

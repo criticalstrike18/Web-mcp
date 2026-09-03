@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "check:types": "tsc --noEmit -p tsconfig.app.json",
     "check:biome": "biome lint --diagnostic-level=error --no-errors-on-unmatched --files-ignore-unknown=true",
-    "check": "bun run check:types && bun run check:biome",
+    "check": "npm run check:types && npm run check:biome",
     "lint": "bun run check:biome",
     "format": "biome check --write --unsafe",
     "preview": "vite preview --host",

@@ -253,6 +253,7 @@ export function ProductDetailView({
       <div className={styles.detailMediaSection}>
         <div className={styles.featuredImageWrapper}>
           <img
+            key={product.url}
             src={product.url}
             alt={product.name || product.title || "Product Showcase"}
             className={styles.featuredImage}

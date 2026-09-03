@@ -23,6 +23,16 @@ npm install
 npm run dev
 ```
 
+## Deployment (Cloudflare Pages)
+
+When deploying to **Cloudflare Pages**:
+- **Framework preset**: `Vite`
+- **Build command**: `npm run build`
+- **Build output directory**: `dist`
+- **Root directory**: `/`
+- **Node.js version**: `22` (specified in `.nvmrc`)
+
+
 ## Tech Stack
 
 - React 19

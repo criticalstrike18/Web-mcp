@@ -267,7 +267,7 @@ export function ProductDisplayManager() {
           isTransitioning: false,
           isFlighting: false,
         });
-      }, 220);
+      }, 350);
     });
 
     return () => {

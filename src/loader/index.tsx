@@ -8,8 +8,17 @@ export function PageLoader({ progress }: { progress: number }) {
   const [visualProgress, setVisualProgress] = React.useState(0);
 
   React.useEffect(() => {
-    const timer = setTimeout(() => setMinTimeElapsed(true), 1500);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(() => setMinTimeElapsed(true), 1200);
+    // Hard safety timeout: loader will always dismiss after 2.8s maximum,
+    // guaranteeing no white screen freeze on slow networks or stalled asset loads
+    const safetyTimer = setTimeout(() => {
+      setShow(false);
+    }, 2800);
+
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(safetyTimer);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -34,9 +43,11 @@ export function PageLoader({ progress }: { progress: number }) {
     return () => cancelAnimationFrame(raf);
   }, [progress]);
 
+  const isComplete = (minTimeElapsed && (progress >= 95 || visualProgress >= 95)) || progress === 100;
+
   React.useEffect(() => {
-    if (minTimeElapsed && progress === 100 && visualProgress >= 99.5) {
-      const t = setTimeout(() => setShow(false), 200);
+    if (minTimeElapsed && (progress >= 95 || visualProgress >= 95)) {
+      const t = setTimeout(() => setShow(false), 300);
       return () => clearTimeout(t);
     }
   }, [minTimeElapsed, progress, visualProgress]);
@@ -45,7 +56,7 @@ export function PageLoader({ progress }: { progress: number }) {
     return null;
   }
 
-  const isHidden = minTimeElapsed && progress === 100 && visualProgress >= 99.5;
+  const isHidden = isComplete && minTimeElapsed;
 
   return (
     <div className={`${styles.overlay} ${isHidden ? styles.hidden : styles.visible}`}>

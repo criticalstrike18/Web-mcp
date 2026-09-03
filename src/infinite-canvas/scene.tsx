@@ -424,7 +424,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
         location.position.y - s.basePos.y,
         location.position.z - s.basePos.z
       );
-      const duration = clamp(Math.round(dist * 2.0), 800, 1400);
+      const duration = clamp(Math.round(dist * 1.8), 750, 1250);
       const targetZ = location.position.z + 24;
 
       startFlightTo(location.position.x, location.position.y, targetZ, duration, {
@@ -456,7 +456,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
         location.position.y - s.basePos.y,
         location.position.z - s.basePos.z
       );
-      const duration = clamp(Math.round(dist * 2.0), 800, 1400);
+      const duration = clamp(Math.round(dist * 1.8), 750, 1250);
 
       startFlightTo(location.position.x, location.position.y, targetZ, duration, {
         mode: isSingle ? "detail" : "grid",
@@ -480,7 +480,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
 
   const [chunks, setChunks] = React.useState<ChunkData[]>([]);
 
-  const { progress } = useProgress();
+  const { progress, active } = useProgress();
   const maxProgress = React.useRef(0);
 
   React.useEffect(() => {
@@ -489,8 +489,11 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
     if (rounded > maxProgress.current) {
       maxProgress.current = rounded;
       onTextureProgress?.(rounded);
+    } else if (!active && maxProgress.current > 0) {
+      maxProgress.current = 100;
+      onTextureProgress?.(100);
     }
-  }, [progress, onTextureProgress]);
+  }, [progress, active, onTextureProgress]);
 
   React.useEffect(() => {
     const canvas = gl.domElement;
@@ -631,6 +634,17 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
 
       if (t >= 1) {
         f.active = false;
+        const targetCx = Math.floor(f.targetX / CHUNK_SIZE);
+        const targetCy = Math.floor(f.targetY / CHUNK_SIZE);
+        const targetCz = Math.floor(f.targetZ / CHUNK_SIZE);
+        setChunks(
+          CHUNK_OFFSETS.map((o) => ({
+            key: `${targetCx + o.dx},${targetCy + o.dy},${targetCz + o.dz}`,
+            cx: targetCx + o.dx,
+            cy: targetCy + o.dy,
+            cz: targetCz + o.dz,
+          }))
+        );
         webmcpEvents.emit({
           type: "CAMERA_NAVIGATE",
           target: { x: f.targetX, y: f.targetY, z: f.targetZ },
@@ -703,7 +717,7 @@ function SceneController({ media, onTextureProgress }: { media: MediaItem[]; onT
 
     const throttleMs = getChunkUpdateThrottleMs(isZooming, Math.abs(s.velocity.z));
 
-    if (s.pendingChunk && shouldThrottleUpdate(s.lastChunkUpdate, throttleMs, now)) {
+    if (!flight.current.active && s.pendingChunk && shouldThrottleUpdate(s.lastChunkUpdate, throttleMs, now)) {
       const { cx: ucx, cy: ucy, cz: ucz } = s.pendingChunk;
       s.pendingChunk = null;
       s.lastChunkUpdate = now;

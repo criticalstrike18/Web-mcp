@@ -23,3 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 .aider*
+Thumbs.db
+
+# Agent tooling & test artifacts
+.agents
+.playwright-mcp
+
+# Cloudflare & deploy build cache
+.cloudflare
+.wrangler
+.turbo
+.vercel
